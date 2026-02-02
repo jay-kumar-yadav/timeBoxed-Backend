@@ -71,21 +71,7 @@ npm start
 
 The server will start on `http://localhost:3000`
 
-### 5. Test the API
 
-**Send OTP:**
-```bash
-curl -X POST http://localhost:3000/api/auth/send-otp \
-  -H "Content-Type: application/json" \
-  -d '{"email":"test@example.com"}'
-```
-
-**Verify OTP:**
-```bash
-curl -X POST http://localhost:3000/api/auth/verify-otp \
-  -H "Content-Type: application/json" \
-  -d '{"email":"test@example.com","otp":"123456"}'
-```
 
 **NFC (tags are pre-saved in DB; user does not register):**
 
@@ -93,7 +79,7 @@ Add a tag to DB (admin; set ADMIN_SECRET in .env):
 ```bash
 curl -X POST http://localhost:3000/api/nfc/admin/add \
   -H "Content-Type: application/json" \
-  -H "Admin-Secret: YOUR_ADMIN_SECRET" \
+ 
   -d '{"tagId":"nfc-tag-identifier-123"}'
 ```
 
@@ -156,99 +142,5 @@ Verifies the OTP code.
 - ✅ 5-minute expiration
 - ✅ Rate limiting (3 requests per email per hour)
 - ✅ Automatic cleanup of expired OTPs
-- ✅ Beautiful HTML email template
 - ✅ CORS enabled for iOS app
 - ✅ Error handling
-
-## Deployment
-
-### Option 1: Heroku
-
-1. Install Heroku CLI
-2. Create Heroku app:
-   ```bash
-   heroku create your-app-name
-   ```
-3. Set environment variables:
-   ```bash
-   heroku config:set GMAIL_USER=your-email@gmail.com
-   heroku config:set GMAIL_APP_PASSWORD=your-app-password
-   ```
-4. Deploy:
-   ```bash
-   git push heroku main
-   ```
-
-### Option 2: Railway
-
-1. Connect your GitHub repo to Railway
-2. Add environment variables in Railway dashboard
-3. Deploy automatically
-
-### Option 3: Render
-
-1. Create new Web Service on Render
-2. Connect your GitHub repo
-3. Add environment variables
-4. Deploy
-
-### Option 4: Your Own Server
-
-1. Install Node.js on your server
-2. Clone the repository
-3. Run `npm install`
-4. Set up `.env` file
-5. Use PM2 to run:
-   ```bash
-   npm install -g pm2
-   pm2 start server.js --name timeboxed-auth
-   ```
-
-## Update iOS App
-
-After deploying, update the API URL in your iOS app:
-
-**File:** `TimeBoxed/Utils/APIService.swift`
-
-```swift
-static let baseURL = "https://your-deployed-url.com/api"
-```
-
-For local testing:
-```swift
-static let baseURL = "http://localhost:3000/api"
-```
-
-**Note:** For iOS Simulator, use `http://localhost:3000`
-**Note:** For physical device, use your computer's IP address: `http://192.168.x.x:3000`
-
-## Troubleshooting
-
-### Email not sending?
-
-1. Check `.env` file has correct credentials
-2. Verify App Password is correct (16 digits, no spaces)
-3. Make sure 2-Step Verification is enabled
-4. Check server logs for error messages
-
-### CORS errors?
-
-The server has CORS enabled. If you still get errors, make sure:
-- The API URL in iOS app matches your backend URL
-- You're using HTTPS in production
-
-### OTP not working?
-
-1. Check server logs
-2. Verify email was sent (check spam folder)
-3. Make sure OTP hasn't expired (5 minutes)
-4. Check rate limiting (max 3 per hour)
-
-## Security Notes
-
-- ⚠️ Never commit `.env` file
-- ⚠️ Use environment variables in production
-- ⚠️ Consider using Redis for OTP storage in production
-- ⚠️ Add request validation and rate limiting
-- ⚠️ Use HTTPS in production
-- ⚠️ Consider implementing JWT tokens for authenticated sessions
