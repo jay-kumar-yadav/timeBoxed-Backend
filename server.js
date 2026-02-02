@@ -1,7 +1,6 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const nodemailer = require('nodemailer');
-const { Resend } = require('resend');
 const twilio = require('twilio');
 const cors = require('cors');
 require('dotenv').config();
@@ -37,20 +36,44 @@ app.use(express.json());
 // Key format: "email:user@example.com" or "phone:+1234567890"
 const otpStore = new Map();
 
-// Email transporter setup with Gmail
-const transporter = nodemailer.createTransport({
-  service: 'gmail',
-  auth: {
-    user: process.env.GMAIL_USER,
-    pass: process.env.GMAIL_APP_PASSWORD
-  }
-});
+// Email: support EMAIL_USER/EMAIL_PASSWORD or GMAIL_USER/GMAIL_APP_PASSWORD
+const emailUser = process.env.EMAIL_USER || process.env.GMAIL_USER;
+const emailPassword = process.env.EMAIL_PASSWORD || process.env.GMAIL_APP_PASSWORD;
 
-// Resend (HTTP API – works on Render; use instead of Gmail SMTP when Render blocks SMTP)
-let resendClient = null;
-if (process.env.RESEND_API_KEY) {
-  resendClient = new Resend(process.env.RESEND_API_KEY);
-  console.log(' Resend email is configured (use for production on Render)');
+/**
+ * Create email transporter (Gmail with timeout/pool options for cloud platforms like Render)
+ */
+function createTransporter() {
+  return nodemailer.createTransport({
+    service: 'gmail',
+    auth: {
+      user: emailUser,
+      pass: emailPassword
+    },
+    connectionTimeout: 20000,
+    greetingTimeout: 20000,
+    socketTimeout: 20000,
+    pool: true,
+    maxConnections: 1,
+    maxMessages: 3,
+    tls: {
+      rejectUnauthorized: false
+    }
+  });
+}
+
+let transporter = null;
+if (emailUser && emailPassword) {
+  transporter = createTransporter();
+  transporter.verify(function(err, success) {
+    if (err) {
+      console.error('Email configuration error:', err.message);
+    } else {
+      console.log(' Gmail SMTP is ready');
+    }
+  });
+} else {
+  console.log(' Email not configured (set EMAIL_USER/EMAIL_PASSWORD or GMAIL_USER/GMAIL_APP_PASSWORD)');
 }
 
 // Twilio client setup
@@ -60,18 +83,6 @@ if (process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN) {
   console.log(' Twilio SMS is configured');
 } else {
   console.log(' Twilio credentials not configured (phone OTP will not work)');
-}
-
-// Verify Gmail only when Resend is not used (avoids SMTP connection timeout on Render)
-if (!resendClient && process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD) {
-  transporter.verify(function(error, success) {
-    if (error) {
-      console.error('Email configuration error:', error.message);
-      console.log(' Use Resend (RESEND_API_KEY) on Render – Gmail SMTP often times out there.');
-    } else {
-      console.log(' Gmail SMTP is ready (local use)');
-    }
-  });
 }
 
 // Generate random 6-digit OTP
@@ -112,15 +123,13 @@ function normalizePhoneNumber(phone) {
 app.use('/api/nfc', nfcRoutes);
 
 app.get('/', (req, res) => {
-  const emailConfigured = !!(process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD);
-  const resendConfigured = !!process.env.RESEND_API_KEY;
+  const emailConfigured = !!(emailUser && emailPassword);
   res.json({
     status: 'ok',
     message: 'Time Boxed API',
     health: '/health',
     api: '/api/auth/send-otp, /api/auth/verify-otp, /api/nfc/verify',
-    emailConfigured: resendConfigured || emailConfigured,
-    resendConfigured
+    emailConfigured
   });
 });
 
@@ -131,16 +140,12 @@ app.get('/health', (req, res) => {
 
 // Debug: check if email is configured (for production troubleshooting – no secrets)
 app.get('/api/debug/email-config', (req, res) => {
-  const resendConfigured = !!process.env.RESEND_API_KEY;
-  const gmailConfigured = !!(process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD);
-  const emailConfigured = resendConfigured || gmailConfigured;
+  const emailConfigured = !!(emailUser && emailPassword);
   res.json({
     emailConfigured,
-    resendConfigured,
-    gmailConfigured,
     hint: emailConfigured
-      ? (resendConfigured ? 'Resend is set. OTP should work on Render.' : 'Gmail is set. On Render use Resend (RESEND_API_KEY) to avoid SMTP timeout.')
-      : 'Set RESEND_API_KEY on Render (recommended) or GMAIL_USER and GMAIL_APP_PASSWORD.'
+      ? 'Gmail env vars are set. If OTP still fails, check Render logs when you send OTP.'
+      : 'Set EMAIL_USER and EMAIL_PASSWORD (or GMAIL_USER and GMAIL_APP_PASSWORD) in Render → Environment.'
   });
 });
 
@@ -207,55 +212,37 @@ app.post('/api/auth/send-otp', async (req, res) => {
 
     // Send OTP via email or SMS
     if (isEmail) {
-      const otpHtml = `
-        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-          <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; text-align: center; border-radius: 10px 10px 0 0;">
-            <h1 style="color: white; margin: 0;">Time Boxed</h1>
-          </div>
-          <div style="background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px;">
-            <h2 style="color: #333; margin-top: 0;">Your Login Code</h2>
-            <p style="color: #666; font-size: 16px;">Your verification code is:</p>
-            <div style="background: white; border: 2px dashed #667eea; border-radius: 8px; padding: 20px; text-align: center; margin: 20px 0;">
-              <span style="font-size: 32px; font-weight: bold; color: #667eea; letter-spacing: 5px;">${otp}</span>
-            </div>
-            <p style="color: #666; font-size: 14px;">This code will expire in 5 minutes.</p>
-            <p style="color: #999; font-size: 12px; margin-top: 30px;">If you didn't request this code, please ignore this email.</p>
-          </div>
-        </div>
-      `;
-      const otpText = `Your Time Boxed login code is: ${otp}\n\nThis code will expire in 5 minutes.\n\nIf you didn't request this code, please ignore this email.`;
-
-      if (resendClient) {
-        const fromAddress = process.env.RESEND_FROM || 'Time Boxed <onboarding@resend.dev>';
-        const { data, error } = await resendClient.emails.send({
-          from: fromAddress,
-          to: [email],
-          subject: 'Your Time Boxed Login Code',
-          html: otpHtml,
-          text: otpText
-        });
-        if (error) {
-          console.error('Resend error:', error);
-          throw new Error(error.message || 'Failed to send email via Resend');
-        }
-        console.log(`OTP sent to email via Resend: ${email}`, data?.id);
-      } else if (process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD) {
-        const mailOptions = {
-          from: { name: 'Time Boxed', address: process.env.GMAIL_USER },
-          to: email,
-          subject: 'Your Time Boxed Login Code',
-          html: otpHtml,
-          text: otpText
-        };
-        await transporter.sendMail(mailOptions);
-        console.log(`OTP sent to email via Gmail: ${email}`);
-      } else {
-        console.error('Send OTP failed: No email service (set RESEND_API_KEY on Render or GMAIL_USER/GMAIL_APP_PASSWORD)');
+      if (!transporter || !emailUser || !emailPassword) {
+        console.error('Send OTP failed: Email not configured (set EMAIL_USER/EMAIL_PASSWORD or GMAIL_USER/GMAIL_APP_PASSWORD)');
         return res.status(503).json({
           success: false,
-          message: 'Email not configured. On Render set RESEND_API_KEY (recommended) or GMAIL_USER/GMAIL_APP_PASSWORD.'
+          message: 'Email not configured. Set EMAIL_USER and EMAIL_PASSWORD (or GMAIL_USER and GMAIL_APP_PASSWORD) on the server.'
         });
       }
+      const mailOptions = {
+        from: { name: 'Time Boxed', address: emailUser },
+        to: email,
+        subject: 'Your Time Boxed Login Code',
+        html: `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+            <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; text-align: center; border-radius: 10px 10px 0 0;">
+              <h1 style="color: white; margin: 0;">Time Boxed</h1>
+            </div>
+            <div style="background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px;">
+              <h2 style="color: #333; margin-top: 0;">Your Login Code</h2>
+              <p style="color: #666; font-size: 16px;">Your verification code is:</p>
+              <div style="background: white; border: 2px dashed #667eea; border-radius: 8px; padding: 20px; text-align: center; margin: 20px 0;">
+                <span style="font-size: 32px; font-weight: bold; color: #667eea; letter-spacing: 5px;">${otp}</span>
+              </div>
+              <p style="color: #666; font-size: 14px;">This code will expire in 5 minutes.</p>
+              <p style="color: #999; font-size: 12px; margin-top: 30px;">If you didn't request this code, please ignore this email.</p>
+            </div>
+          </div>
+        `,
+        text: `Your Time Boxed login code is: ${otp}\n\nThis code will expire in 5 minutes.\n\nIf you didn't request this code, please ignore this email.`
+      };
+      await transporter.sendMail(mailOptions);
+      console.log(`OTP sent to email: ${email}`);
     } else if (isPhone && twilioClient) {
       // Send SMS via Twilio
       const message = await twilioClient.messages.create({
