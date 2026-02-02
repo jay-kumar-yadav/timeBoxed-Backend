@@ -101,19 +101,31 @@ function normalizePhoneNumber(phone) {
 // NFC routes (JWT required)
 app.use('/api/nfc', nfcRoutes);
 
-// Root – so opening the Render link shows a message instead of "Cannot GET /"
 app.get('/', (req, res) => {
+  const emailConfigured = !!(process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD);
   res.json({
     status: 'ok',
     message: 'Time Boxed API',
     health: '/health',
-    api: '/api/auth/send-otp, /api/auth/verify-otp, /api/nfc/verify'
+    api: '/api/auth/send-otp, /api/auth/verify-otp, /api/nfc/verify',
+    emailConfigured
   });
 });
 
 // Health check endpoint
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', message: 'Time Boxed Auth API is running' });
+});
+
+// Debug: check if email is configured (for production troubleshooting – no secrets)
+app.get('/api/debug/email-config', (req, res) => {
+  const emailConfigured = !!(process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD);
+  res.json({
+    emailConfigured,
+    hint: emailConfigured
+      ? 'Gmail env vars are set. If OTP still fails, check Render logs when you send OTP.'
+      : 'Set GMAIL_USER and GMAIL_APP_PASSWORD in Render → Environment.'
+  });
 });
 
 // Send OTP endpoint (supports both email and phone)
@@ -179,6 +191,13 @@ app.post('/api/auth/send-otp', async (req, res) => {
 
     // Send OTP via email or SMS
     if (isEmail) {
+      if (!process.env.GMAIL_USER || !process.env.GMAIL_APP_PASSWORD) {
+        console.error('Send OTP failed: Gmail not configured (set GMAIL_USER and GMAIL_APP_PASSWORD on Render)');
+        return res.status(503).json({
+          success: false,
+          message: 'Email service not configured. Set GMAIL_USER and GMAIL_APP_PASSWORD on the server.'
+        });
+      }
       // Send email
       const mailOptions = {
         from: {
@@ -229,10 +248,17 @@ app.post('/api/auth/send-otp', async (req, res) => {
       expiresIn: 300 // 5 minutes in seconds
     });
   } catch (error) {
-    console.error('Error sending OTP:', error);
+    const isProduction = process.env.NODE_ENV === 'production';
+    console.error('Error sending OTP:', error.message || error);
+    if (isProduction) {
+      console.error('Full error (check Render logs):', error);
+    }
+    const clientMessage = isProduction
+      ? 'Failed to send OTP. Please try again later. Check server logs for details.'
+      : (error.message || 'Failed to send OTP. Please try again later.');
     res.status(500).json({
       success: false,
-      message: 'Failed to send OTP. Please try again later.'
+      message: clientMessage
     });
   }
 });
