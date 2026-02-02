@@ -37,8 +37,8 @@ app.use(express.json());
 const otpStore = new Map();
 
 // Email: support EMAIL_USER/EMAIL_PASSWORD or GMAIL_USER/GMAIL_APP_PASSWORD
-const emailUser = process.env.EMAIL_USER || process.env.GMAIL_USER;
-const emailPassword = process.env.EMAIL_PASSWORD || process.env.GMAIL_APP_PASSWORD;
+const emailUser = process.env.GMAIL_USER;
+const emailPassword =  process.env.GMAIL_APP_PASSWORD;
 
 /**
  * Create email transporter (Gmail with timeout/pool options for cloud platforms like Render)
