@@ -101,6 +101,16 @@ function normalizePhoneNumber(phone) {
 // NFC routes (JWT required)
 app.use('/api/nfc', nfcRoutes);
 
+// Root – so opening the Render link shows a message instead of "Cannot GET /"
+app.get('/', (req, res) => {
+  res.json({
+    status: 'ok',
+    message: 'Time Boxed API',
+    health: '/health',
+    api: '/api/auth/send-otp, /api/auth/verify-otp, /api/nfc/verify'
+  });
+});
+
 // Health check endpoint
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', message: 'Time Boxed Auth API is running' });
