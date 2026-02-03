@@ -83,11 +83,10 @@ curl -X POST http://localhost:3000/api/nfc/admin/add \
   -d '{"tagId":"nfc-tag-identifier-123"}'
 ```
 
-Verify scanned tag (user logged in with JWT):
+Verify scanned tag (login not required):
 ```bash
 curl -X POST http://localhost:3000/api/nfc/verify \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
   -d '{"tagId":"nfc-tag-identifier-123"}'
 ```
 Response: `{ "success": true, "valid": true }` or `{ "success": true, "valid": false }`. See `NFC_SETUP.md` for full flow.

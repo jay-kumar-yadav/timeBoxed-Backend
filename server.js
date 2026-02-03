@@ -36,45 +36,14 @@ app.use(express.json());
 // Key format: "email:user@example.com" or "phone:+1234567890"
 const otpStore = new Map();
 
-// Email: support EMAIL_USER/EMAIL_PASSWORD or GMAIL_USER/GMAIL_APP_PASSWORD
-const emailUser = process.env.GMAIL_USER;
-const emailPassword =  process.env.GMAIL_APP_PASSWORD;
-
-/**
- * Create email transporter (Gmail with timeout/pool options for cloud platforms like Render)
- */
-function createTransporter() {
-  return nodemailer.createTransport({
-    service: 'gmail',
-    auth: {
-      user: emailUser,
-      pass: emailPassword
-    },
-    connectionTimeout: 20000,
-    greetingTimeout: 20000,
-    socketTimeout: 20000,
-    pool: true,
-    maxConnections: 1,
-    maxMessages: 3,
-    tls: {
-      rejectUnauthorized: false
-    }
-  });
-}
-
-let transporter = null;
-if (emailUser && emailPassword) {
-  transporter = createTransporter();
-  transporter.verify(function(err, success) {
-    if (err) {
-      console.error('Email configuration error:', err.message);
-    } else {
-      console.log(' Gmail SMTP is ready');
-    }
-  });
-} else {
-  console.log(' Email not configured (set EMAIL_USER/EMAIL_PASSWORD or GMAIL_USER/GMAIL_APP_PASSWORD)');
-}
+// Email transporter setup with Gmail
+const transporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: process.env.GMAIL_USER,
+    pass: process.env.GMAIL_APP_PASSWORD
+  }
+});
 
 // Twilio client setup
 let twilioClient = null;
@@ -84,6 +53,16 @@ if (process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN) {
 } else {
   console.log(' Twilio credentials not configured (phone OTP will not work)');
 }
+
+// Verify email configuration on startup
+transporter.verify(function(error, success) {
+  if (error) {
+    console.error('Email configuration error:', error);
+    console.log('\n Please check your Gmail credentials in .env file');
+  } else {
+    console.log(' Email server is ready to send messages');
+  }
+});
 
 // Generate random 6-digit OTP
 function generateOTP() {
@@ -123,30 +102,17 @@ function normalizePhoneNumber(phone) {
 app.use('/api/nfc', nfcRoutes);
 
 app.get('/', (req, res) => {
-  const emailConfigured = !!(emailUser && emailPassword);
   res.json({
     status: 'ok',
     message: 'Time Boxed API',
     health: '/health',
-    api: '/api/auth/send-otp, /api/auth/verify-otp, /api/nfc/verify',
-    emailConfigured
+    api: '/api/auth/send-otp, /api/auth/verify-otp, /api/nfc/verify'
   });
 });
 
 // Health check endpoint
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', message: 'Time Boxed Auth API is running' });
-});
-
-// Debug: check if email is configured (for production troubleshooting – no secrets)
-app.get('/api/debug/email-config', (req, res) => {
-  const emailConfigured = !!(emailUser && emailPassword);
-  res.json({
-    emailConfigured,
-    hint: emailConfigured
-      ? 'Gmail env vars are set. If OTP still fails, check Render logs when you send OTP.'
-      : 'Set EMAIL_USER and EMAIL_PASSWORD (or GMAIL_USER and GMAIL_APP_PASSWORD) in Render → Environment.'
-  });
 });
 
 // Send OTP endpoint (supports both email and phone)
@@ -212,15 +178,12 @@ app.post('/api/auth/send-otp', async (req, res) => {
 
     // Send OTP via email or SMS
     if (isEmail) {
-      if (!transporter || !emailUser || !emailPassword) {
-        console.error('Send OTP failed: Email not configured (set EMAIL_USER/EMAIL_PASSWORD or GMAIL_USER/GMAIL_APP_PASSWORD)');
-        return res.status(503).json({
-          success: false,
-          message: 'Email not configured. Set EMAIL_USER and EMAIL_PASSWORD (or GMAIL_USER and GMAIL_APP_PASSWORD) on the server.'
-        });
-      }
+      // Send email
       const mailOptions = {
-        from: { name: 'Time Boxed', address: emailUser },
+        from: {
+          name: 'Time Boxed',
+          address: process.env.GMAIL_USER
+        },
         to: email,
         subject: 'Your Time Boxed Login Code',
         html: `
@@ -241,6 +204,7 @@ app.post('/api/auth/send-otp', async (req, res) => {
         `,
         text: `Your Time Boxed login code is: ${otp}\n\nThis code will expire in 5 minutes.\n\nIf you didn't request this code, please ignore this email.`
       };
+
       await transporter.sendMail(mailOptions);
       console.log(`OTP sent to email: ${email}`);
     } else if (isPhone && twilioClient) {
@@ -264,17 +228,10 @@ app.post('/api/auth/send-otp', async (req, res) => {
       expiresIn: 300 // 5 minutes in seconds
     });
   } catch (error) {
-    const isProduction = process.env.NODE_ENV === 'production';
-    console.error('Error sending OTP:', error.message || error);
-    if (isProduction) {
-      console.error('Full error (check Render logs):', error);
-    }
-    const clientMessage = isProduction
-      ? 'Failed to send OTP. Please try again later. Check server logs for details.'
-      : (error.message || 'Failed to send OTP. Please try again later.');
+    console.error('Error sending OTP:', error);
     res.status(500).json({
       success: false,
-      message: clientMessage
+      message: 'Failed to send OTP. Please try again later.'
     });
   }
 });
@@ -370,7 +327,7 @@ app.listen(PORT, () => {
   console.log(`Health check: http://localhost:${PORT}/health`);
   console.log(`Send OTP: POST http://localhost:${PORT}/api/auth/send-otp`);
   console.log(`Verify OTP: POST http://localhost:${PORT}/api/auth/verify-otp`);
-  console.log(`NFC Verify: POST http://localhost:${PORT}/api/nfc/verify (Bearer JWT)\n`);
+  console.log(`NFC Verify: POST http://localhost:${PORT}/api/nfc/verify (no auth required)\n`);
   
   if (!process.env.GMAIL_USER || !process.env.GMAIL_APP_PASSWORD) {
     console.log('  WARNING: Gmail credentials not configured!');
